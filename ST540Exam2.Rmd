@@ -1,0 +1,168 @@
+---
+title: "ST540 Midterm 2"
+author: "Josh Baber"
+date: "4/13/2022"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+#read in data
+greenup <- read.csv(file.choose(), sep = ",")
+```
+
+```{r}
+attach(greenup)
+library(tidyr)
+library(dplyr)
+YearlyMax <- greenup %>% group_by(Year) %>% mutate(MaxEVI = max(EVI)) %>% ungroup() %>% mutate(MaxEVI = case_when(EVI == MaxEVI ~ MaxEVI, TRUE ~ NA_real_)) %>% filter(!is.na(MaxEVI)) %>% select(-EVI)
+LessThanMax <- greenup %>% group_by(Year) %>% filter(row_number(DOY) <= which.max(EVI))
+yearlynearGUT <- LessThanMax %>% group_by(Year) %>% slice(which.min(abs(EVI-0.5))) %>% ungroup()
+signs <- sign(yearlynearGUT$EVI-0.5)
+deviations <- c(abs(yearlynearGUT$EVI-0.5))*signs
+deviationsDOY <- c(yearlynearGUT$DOY-mean(yearlynearGUT$DOY))
+Years <- c(yearlynearGUT$Year)
+YearlyDeviations <- data.frame(Years, yearlynearGUT$DOY, deviations, deviationsDOY)
+plot(greenup$DOY, greenup$EVI)
+```
+
+```{r}
+which(YearlyDeviations$deviations>40)
+yearlynearGUT <- yearlynearGUT[-c(4,6,7),]
+YearlyDeviations <- YearlyDeviations[-c(4,6,7),]
+hist(YearlyDeviations$deviationsDOY)
+hist(yearlynearGUT$DOY)
+```
+
+```{r}
+library(rjags)
+n <- 33
+Y <- yearlynearGUT$DOY
+data <- list(Y=Y, n=n)
+burn <- 10000
+n.iter <- 20000
+thin <- 20
+n.chains <- 2
+modelstring <- textConnection("model{
+
+   # Likelihood
+    for(i in 1:n){
+      Y[i] ~ dnorm(alpha[i],taue)
+    }
+
+   # Random effects
+    for(i in 1:n){alpha[i] ~ dnorm(mu,taua)}
+
+   # Priors
+    mu   ~ dnorm(0,0.0001)
+    taue ~ dgamma(0.1,0.1)
+    taua ~ dgamma(0.1,0.1)
+    
+   #Compute DIC
+ }")
+params   <- c("mu","alpha","taue","taua")
+model    <- jags.model(modelstring, data = data, 
+                        n.chains=n.chains, quiet=TRUE)
+update(model, burn, progress.bar="none")
+samples1 <- coda.samples(model, variable.names=params, thin=thin,
+                          n.iter=n.iter, progress.bar="none")
+samples1 <- rbind(samples1[[1]],samples1[[2]])
+alpha    <- samples1[,1:n]
+mu       <- samples1[,n+1]
+sigma2   <- 1/samples1[,n+2:3]
+r        <- sigma2[,2]/rowSums(sigma2)
+boxplot(alpha~col(alpha),ylim=range(Y),xlab="Year",ylab="DOY of GUT",outline=FALSE)
+dic1   <- dic.samples(model,n.iter=n.iter,progress.bar="none")
+```
+
+```{r}
+(effectiveSize(samples1))
+```
+
+```{r}
+aboveGUT <- LessThanMax %>% group_by(Year) %>% filter(EVI >= 0.5) %>% ungroup()
+belowGUT <- LessThanMax %>% group_by(Year) %>% filter(EVI <= 0.5) %>% ungroup()
+closestaboveGUT <- aboveGUT %>% group_by(Year) %>% slice(which.min(EVI-0.5)) %>% ungroup()
+closestaboveGUT <- closestaboveGUT[-c(1,4,6,7),]
+closestbelowGUT <- belowGUT %>% group_by(Year) %>% slice(which.max(EVI-0.5)) %>% ungroup()
+closestbelowGUT <- closestbelowGUT[-c(3,5,6),]
+runs <- closestaboveGUT$DOY-closestbelowGUT$DOY
+rises <- closestaboveGUT$EVI-closestbelowGUT$EVI
+slopes <- rises/runs
+addedDOYS <- ((0.5-closestbelowGUT$EVI)/slopes)+(closestbelowGUT$DOY)
+LinearGUT <- data.frame(closestbelowGUT$Year, addedDOYS)
+colnames(LinearGUT) <- c("Year", "DOY")
+```
+
+```{r}
+library(rjags)
+n <- 32
+Y <- LinearGUT$DOY
+data <- list(Y=Y, n=n)
+burn <- 10000
+n.iter <- 20000
+thin <- 20
+n.chains <- 2
+modelstring <- textConnection("model{
+
+   # Likelihood
+    for(i in 1:n){
+      Y[i] ~ dnorm(alpha[i],taue)
+    }
+
+   # Random effects
+    for(i in 1:n){alpha[i] ~ dnorm(mu,taua)}
+
+   # Priors
+    mu   ~ dnorm(0,0.0001)
+    taue ~ dgamma(0.1,0.1)
+    taua ~ dgamma(0.1,0.1)
+    
+ }")
+params   <- c("mu","alpha","taue","taua")
+model2    <- jags.model(modelstring, data = data, 
+                        n.chains=n.chains, quiet=TRUE)
+update(model2, burn, progress.bar="none")
+samples2 <- coda.samples(model2, variable.names=params, thin=thin,
+                          n.iter=n.iter, progress.bar="none")
+samples2 <- rbind(samples2[[1]],samples2[[2]])
+alpha    <- samples2[,1:n]
+mu       <- samples2[,n+1]
+sigma2   <- 1/samples2[,n+2:3]
+r        <- sigma2[,2]/rowSums(sigma2)
+boxplot(alpha~col(alpha),ylim=range(Y),xlab="Year",ylab="DOY of GUT",outline=FALSE)
+dic2   <- dic.samples(model2,n.iter=n.iter,progress.bar="none")
+```
+
+```{r}
+effectiveSize(samples2)
+```
+
+```{r}
+dic1
+dic2
+```
+
+```{r}
+apply(sqrt(sigma2),2,quantile,c(0.5,0.025,0.975))
+plot(density(sigma2[,1]),xlab="Sigma",ylab="Posterior",main="Error SD vs. Random Error SD")
+lines(density(sigma2[,2]), col = 2)
+legend("topright",c("InvGamma","Random Effect"),lty=1,col=1:2,bty="n")
+```
+
+```{r}
+plot(YearlyMax$Year, YearlyMax$MaxEVI)
+```
+
+```{r}
+YearlyMin <- greenup %>% group_by(Year) %>% mutate(MinEVI = min(EVI)) %>% ungroup() %>% mutate(MinEVI = case_when(EVI == MinEVI ~ MinEVI, TRUE ~ NA_real_)) %>% filter(!is.na(MinEVI)) %>% select(-EVI)
+plot(YearlyMin$Year, YearlyMin$MinEVI)
+```
+
+
+
+
+
