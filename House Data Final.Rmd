@@ -1,0 +1,241 @@
+---
+title: "Project 2"
+author: "Josh Baber"
+date: "4/3/2019"
+bibliography: [PackagesUsed.bib]
+output: pdf_document
+---
+
+```{r message = FALSE}
+housedata <- read.csv(file.choose(), 
+                      colClasses = c(id = "character", date = "character", 
+                                     yr_built = "character", zipcode = "factor", grade = "factor"))
+housedata$date <- as.Date(housedata$date, "%Y%m%d")
+housedata$waterfront <- factor(housedata$waterfront, labels = c("No", "Yes"))
+housedata$condition <- factor(housedata$condition, labels = c("poor", "fair", "average", "good", "very good"))
+housedata$yr_renovated <- ifelse(housedata$yr_renovated == 0, housedata$yr_built, housedata$yr_renovated)
+housedata$yr_built <- as.Date(ISOdate(housedata$yr_built, 9, 1))  # Complete Year, Sept 1
+housedata$yr_renovated <- as.Date(ISOdate(housedata$yr_renovated, 9, 1))  # Last renovated Year, Sept 1
+```
+I fixed some of the variables so that they would be easier to measure.
+```{r}
+#Remove ID
+housedata = housedata[,-1]
+#Remove Date
+housedata = housedata[,-1]
+#Remove zipcode
+housedata = housedata[,-15]
+#Remove sqft_basement
+housedata = housedata[,-12]
+```
+I removed irrelevant and insignificant data.
+
+#Split into test and training
+```{r}
+training.size = dim(housedata)[1]/2
+training = sample(1:dim(housedata)[1], training.size)
+testing = -training
+house.train = housedata[training, ]
+house.test = housedata[testing, ]
+```
+
+#Plots against variables
+```{r}
+par(mfrow = c(2,2))
+plot(price~bedrooms, data = housedata)
+plot(price~bathrooms, data = housedata)
+plot(price~sqft_living, data = housedata)
+plot(price~sqft_lot, data = housedata)
+plot(price~floors, data = housedata)
+plot(price~view, data = housedata)
+plot(price~sqft_above, data = housedata)
+plot(price~lat, data = housedata)
+plot(price~long, data = housedata)
+plot(price~sqft_living15, data = housedata)
+plot(price~sqft_lot15, data = housedata)
+```
+This helps me visualize my data and see the relationship between the variables and the price.  It is clear some predictors, like sqft_living and sqft_above, have strong relationships with the price.
+
+#Best Subset (Model #1)
+```{r}
+library(leaps)
+regfull <- regsubsets(price ~., data = house.train, nvmax = 16)
+summary(regfull)
+bestsub <- summary(regfull)
+bestsub$rsq
+par(mfrow=c(2,2))
+plot(bestsub$rss ,xlab="Number of Variables ",ylab="RSS",
+type="l")
+```
+#Minimum CP
+```{r}
+which.min(bestsub$cp)
+plot(bestsub$adjr2 ,xlab="Number of Variables ",
+ylab="Adjusted RSq",type="l")
+```
+#Minimum BIC
+```{r}
+which.min(bestsub$bic)
+```
+Both BIC and CP tell me that keeping all 16 variables will give me the lowest error.
+
+#Model with all remaining variables (Model #2)
+```{r}
+library(ggplot2)
+plot1 <- ggplot(data = house.train, aes(x = sqft_living, y = price)) + 
+  geom_point(alpha = 0.05, color = "red") + 
+  theme_bw()
+plot1
+lm1 <- lm(price ~ bedrooms + bathrooms + sqft_living + sqft_lot + floors + waterfront + view + condition + grade + sqft_above + yr_built + yr_renovated + lat + long + sqft_living15 + sqft_lot15, data = house.train)
+summary(lm1)
+```
+Plot to visualize all of the data between sqft_living and price
+Having all predictors gives me a reasonable error.
+
+#Variables with specific condition and grade (Model #3)
+```{r}
+library(car)
+lm2 <- lm(price ~ bedrooms + bathrooms + sqft_living + floors + I(waterfront == "Yes") + view + I(condition == "average") + I(condition == "good") + I(condition == "very good") + I(grade == "11") + I(grade == "12") + I(grade == "13") + sqft_above + yr_built + yr_renovated + lat + long + sqft_living15, data = house.train)
+summary(lm2)
+```
+I noticed that waterfront, condition, and grade had specific levels at which they were significant, so I chose only the significant ones.  This increased my error, however.
+
+#Backwards Elimination (Model #4)
+```{r}
+library(MASS)
+modback <- stepAIC(lm1, direction = "backward")
+summary(modback)
+```
+Backwards elimination yielded the same result as my full model (lm1).
+
+#Forward Selection (Model #5)
+```{r}
+modfor = stepAIC(lm1, direction = "forward")
+summary(modfor)
+```
+Forward selection yielded the same result as lm1 and as backwards elimination.
+
+#Model with most significant variables (p<2e-16) (Model #6)
+```{r}
+lm3 <- lm(price ~ bedrooms + bathrooms + sqft_living + sqft_lot + floors + I(waterfront == "Yes") + view + I(grade == "13") + sqft_above + yr_built + yr_renovated, data = housedata)
+summary(lm3)
+```
+In lm1, some variables had extremely significant p values of 2e-16.  I removed the ones that didn't have this relationship.  This only increased my error.
+
+#Tried to flatten residuals plot by approximating power of sqft_living (Model #7)
+```{r}
+lm4 = lm(price ~ I(sqft_living^1.5), data = house.train)
+summary(lm4)
+residualPlots(lm4)
+```
+I tried raising the power of one of the more significant variables and seeing how that affected its residuals.  This resulted in a huge spike in error and indicates that we cannot predict accurately with just one variable.
+
+#It seems the more variables I have the better my error
+#Let me try with variables I think would have to do with price (Model #8)
+```{r}
+lm5 <- lm(price ~ bedrooms + bathrooms + sqft_living + sqft_lot + floors + waterfront + condition + sqft_above + yr_built + yr_renovated + sqft_living15 + sqft_lot15, data = house.train)
+summary(lm5)
+```
+This is a model with all of the variables I imagined would be related to price.  Some of them turned out to be while some of the ones I omitted are more significant than I would think.
+
+#Graph some residuals for full plot
+```{r}
+residualPlots(lm1)
+```
+Graphing the residuals for each variable helped me recognize that maybe I should try raising bathrooms and sqft_living to a higher power.
+
+#Try some polynomial fits (Model #9)
+```{r}
+lm6 = lm(price ~ bedrooms + I(bathrooms^1.5) + I(sqft_living^2) + sqft_lot + floors + waterfront + view + condition + grade + sqft_above + lat + long + sqft_living15 + sqft_lot15, data = house.test)
+summary(lm6)
+```
+Raising the power of these variables helped with error but not by much.
+
+#Another higher order model (Model #10)
+```{r}
+lm8 = lm(price ~ bedrooms + I(bathrooms^2) + I(sqft_living^2) + sqft_lot + floors + waterfront + view + condition + grade + sqft_above + lat + long + sqft_living15 + sqft_lot15, data = house.train)
+summary(lm8)
+```
+Again I am not sure trying to find a better polynomial function will actually decrease the error enough.
+
+
+#Correlation model 1 (Model #11)
+```{r}
+lm6 <- lm(price ~. + price:sqft_living + price:bathrooms + bathrooms:bedrooms, data = house.train)
+summary(lm6)
+```
+```{r}
+mean(lm6$residuals^2)
+```
+I created a full model and added in the correlations between some of the stronger relationships on my corrplot.  The result was extremely low error.
+
+#Really Good
+
+#Try to make it better (Model #12)
+```{r}
+lm9 = lm(price ~. + price:sqft_living + price:sqft_above + price:sqft_living15, data = house.train)
+summary(lm9)
+```
+I did the same thing but instead included the correlations that had the strongest relationships with price, the response variable.  I am not 100% sure this is legal because it resulted in extremely low error.
+
+#Also really good
+
+#Try to make a correlation model without price (Model #13)
+```{r}
+lm7 <- lm(price~. + sqft_living:sqft_above + sqft_living:sqft_living15 + sqft_lot:sqft_lot15, data = house.train)
+summary(lm7)
+```
+Since I wasn't sure if I was allowed to plot correlations with the response variable in them, I made a model with only correlations between predictors.  The result was a very good model with good error.
+
+#Ridge (Model #14)
+```{r}
+library(glmnet)
+x = model.matrix(price~.,housedata)[,-1]
+y = housedata$price
+grid=10^seq(10,-2,length=100)
+set.seed(1)
+train = sample(1:nrow(x), nrow(x)/2)
+test = (-train)
+ridgemodel=glmnet(x[train,],y[train],alpha=0,lambda=grid, thresh = 1e-12)
+cv.out = cv.glmnet(x[train,], y[train], alpha = 0)
+bestlam = cv.out$lambda.min
+ridgepredict=predict(ridgemodel,s=bestlam, newx=x[test, ])
+sqrt(mean((ridgepredict - y[test])^2))
+```
+The ridge model didn't perform much better than my previous methods.
+
+#LASSO (Model #15)
+```{r}
+lassomodel=glmnet(x[train,], y[train], alpha = 1, lambda = grid)
+set.seed(1)
+cv.out = cv.glmnet(x[train,], y[train], alpha = 1)
+bestlam = cv.out$lambda.min
+lassopredict = predict(lassomodel, s = bestlam, newx=x[test,])
+sqrt(mean((lassopredict - y[test])^2))
+```
+The LASSO model performed better than my ridge model but not by much.
+
+#Corrplot
+```{r}
+library(corrplot)
+is.data.frame(housedata)
+housedata[c("waterfront", "condition", "grade", "yr_built", "yr_renovated")] <- NULL
+corrplot(cor(housedata))
+```
+I put this at the bottom since I wanted to keep the non-numerical predictors for the code chunks above.
+
+#Results
+I found that error will stay around the same level when using different kinds of selection.  This may be because I went ahead and deleted many variables at the beginning.  Either way, my correlation models were the best models I came up with.
+
+
+This document uses `ggplot2` by @R-ggplot2, `rmarkdown` by @R-rmarkdown, `knitr` by @R-knitr, `glmnet` by @R-glmnet, `corrplot` by @R-corrplot, `leaps` by @R-leaps, `car` by @R-car, `MASS` by @R-MASS.  This document also uses [@james_introduction_2013].
+
+```{r, results='hide', echo=FALSE}
+PackagesUsed <- c("ggplot2", "rmarkdown", "knitr", "glmnet", "corrplot", "leaps", "car", "MASS")
+#Write bib information
+knitr::write_bib(PackagesUsed, file = "./PackagesUsed.bib")
+# Load packages
+lapply(PackagesUsed, library, character.only = TRUE)
+```
+
+#References
